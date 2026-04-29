@@ -1,21 +1,23 @@
-// Pins
-const int pinS1 = 2;    // Encoder S1 (Interrupt)
-const int pinS2 = 4;    // Encoder S2 (Direction)
+// ================== PINS ==================
+const int pinS1 = 2;    // Encoder A (interrupt)
+const int pinS2 = 3;    // Encoder B (direction)
 const int motorL = 5;   // IN1
 const int motorR = 6;   // IN2
 
-// Constants
-const int pulsesPerRevolution = 40; 
+// ================== CONSTANTS ==================
+const int pulsesPerRevolution = 40; // 20 slots × 2 edges
 
-// Variables
-volatile int pulseCount = 0;
-float rotations = 0.0;
+// ================== VARIABLES ==================
+volatile long pulseCount = 0;   // FIXED: prevent overflow
+
 float current_deg = 0.0;
-float target_deg = 360.0; 
+float target_deg = 360.0;       // 1 full rotation
 
+// ================== SETUP ==================
 void setup() {
   pinMode(pinS1, INPUT_PULLUP);
   pinMode(pinS2, INPUT_PULLUP);
+
   pinMode(motorL, OUTPUT);
   pinMode(motorR, OUTPUT);
 
@@ -24,42 +26,77 @@ void setup() {
   Serial.begin(9600);
 }
 
+// ================== LOOP ==================
 void loop() {
-  // 1. Calculate Position
-  rotations = (float)pulseCount / (float)pulsesPerRevolution;
+
+  // ---- SAFE READ (avoid interrupt conflict) ----
+  long count;
+  noInterrupts();
+  count = pulseCount;
+  interrupts();
+
+  // ---- POSITION CALCULATION ----
+  float rotations = (float)count / pulsesPerRevolution;
   current_deg = rotations * 360.0;
 
-  // 2. Continuous Hunting Logic (No ENA/PWM)
-  // We use a tiny deadzone (2 degrees) so it doesn't vibrate 
-  // quite as violently, but it will still be "jumpy".
-  
-  if (current_deg < (target_deg - 2.0)) {
-    // Too low? Full power forward
-    digitalWrite(motorL, HIGH);
-    digitalWrite(motorR, LOW);
+  float error = target_deg - current_deg;
+
+  // ---- SIMPLE ON/OFF CONTROL ----
+  // Deadzone matches ~9° resolution
+  if (error > 8.0) {
+    moveForward();
   } 
-  else if (current_deg > (target_deg + 2.0)) {
-    // Too high? Full power backward
-    digitalWrite(motorL, LOW);
-    digitalWrite(motorR, HIGH);
+  else if (error < -8.0) {
+    moveBackward();
   } 
   else {
-    // Within 2 degrees? Coast/Stop
-    digitalWrite(motorL, LOW);
-    digitalWrite(motorR, LOW);
+    stopMotor();
   }
 
-  // Serial Monitor
+  // ---- SERIAL DEBUG (every 50ms) ----
   static unsigned long lastPrint = 0;
   if (millis() - lastPrint > 50) {
-    // Labeling values (optional, only in IDE 2.0+)
-    Serial.print("Current:"); 
-    Serial.print(current_deg);
-    Serial.print(",");
-    Serial.print("Target:"); 
-    Serial.println(target_deg); // Ends the line to plot the point
-    
+   Serial.print(current_deg);
+Serial.print(" ");
+Serial.println(target_deg);
+
+
     lastPrint = millis();
+  }
+}
+
+// ================== MOTOR FUNCTIONS ==================
+void moveForward() {
+  digitalWrite(motorL, HIGH);
+  digitalWrite(motorR, LOW);
+}
+
+void moveBackward() {
+  digitalWrite(motorL, LOW);
+  digitalWrite(motorR, HIGH);
+}
+
+void stopMotor() {
+  digitalWrite(motorL, LOW);
+  digitalWrite(motorR, LOW);
+}
+
+// ================== ENCODER ==================
+void handleEncoder() {
+  static unsigned long lastTime = 0;
+
+  // Simple noise filter (debounce)
+  if (micros() - lastTime < 150) return;
+
+  if (digitalRead(pinS1) != digitalRead(pinS2)) {
+    pulseCount++;
+  } else {
+    pulseCount--;
+  }
+
+  lastTime = micros();
+}
+
   }
 }
 
