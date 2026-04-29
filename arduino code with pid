@@ -1,107 +1,129 @@
-// Pins
-const int pinS1 = 2;    // Encoder A (Interrupt)
-const int pinS2 = 4;    // Encoder B (Direction)
-const int ENA = 3;      // PWM Speed Control
-const int motorL = 10;  // IN1
-const int motorR = 11;  // IN2
+// ================== PINS ==================
+const int pinS1 = 2;    // Encoder A (interrupt)
+const int pinS2 = 3;    // Encoder B (direction)
+const int motorL = 5;   // IN1
+const int motorR = 6;   // IN2
+const int speedConnector = 11;
 
-// Constants
-const int pulsesPerRevolution = 40; // 20 slots * 2 for CHANGE interrupt
+// ================== CONSTANTS ==================
+const int pulsesPerRevolution = 40; // 20 slots × 2 edges
 
-// Variables
-volatile int pulseCount = 0;
+// ================== VARIABLES ==================
+volatile long pulseCount = 0;   // FIXED: prevent overflow
+
 float current_deg = 0.0;
-float target_deg = 1000.0; 
+float target_deg = 360.0;       // 1 full rotation
 
-// PID Gains
-double Kp = 2.0;  
-double Ki = 0.2;  
-double Kd = 1.0;  
+//PID constants
+float Kp = 00.0;
+float Ki = 0.0;
+float Kd = 0.0;
 
-// PID Calculation Variables
-double lastError = 0;
-double integralSum = 0;
-unsigned long lastTime;
+float last_error = 0;
+float error = 0;
+float changeError = 0;
+float totalError = 0;
+float speed = ;
 
+
+// ================== SETUP ==================
 void setup() {
   pinMode(pinS1, INPUT_PULLUP);
   pinMode(pinS2, INPUT_PULLUP);
+
   pinMode(motorL, OUTPUT);
   pinMode(motorR, OUTPUT);
-  pinMode(ENA, OUTPUT);
 
-  // Trigger whenever S1 pulses
   attachInterrupt(digitalPinToInterrupt(pinS1), handleEncoder, CHANGE);
 
+digitalWrite(motorL, LOW);
+  digitalWrite(motorR, LOW);
+  Serial.print(current_deg);
   Serial.begin(9600);
-  lastTime = millis();
 }
 
+// ================== LOOP ==================
 void loop() {
-  unsigned long currentTime = millis();
-  double elapsedTime = (double)(currentTime - lastTime);
 
-  // 1. Calculate Current Degrees
-  current_deg = ( (float)pulseCount / (float)pulsesPerRevolution ) * 360.0;
+  // ---- SAFE READ (avoid interrupt conflict) ----
+  long count;
+  noInterrupts();
+  count = pulseCount;
+  interrupts();
 
-  // 2. PID Calculation (Every 50ms)
-  if (elapsedTime >= 50) {
-    double error = target_deg - current_deg;
+  
 
-    // Integral Term with anti-windup (prevents motor from spinning out of control)
-    integralSum += error * (elapsedTime / 1000.0);
-    integralSum = constrain(integralSum, -150, 150); 
-    
-    // Derivative Term
-    double derivative = (error - lastError) / (elapsedTime / 1000.0);
-    
-    // Total PID Output
-    double output = (Kp * error) + (Ki * integralSum) + (Kd * derivative);
+  // ---- POSITION CALCULATION ----
+  float rotations = (float)count / pulsesPerRevolution;
+  current_deg = rotations * 360.0;
 
-    controlMotor(output);
+PIDcalculation();
 
-    // 3. Serial Plotter Output (Clean numbers for graphing)
-    // Blue line = Target, Red line = Current position
-    Serial.print(target_deg);
-    Serial.print(",");
-    Serial.println(current_deg);
+  if (error > 8.0) {
+    moveForward();
+  } 
+  else if (error < -8.0) {
+    moveBackward();
+  } 
+  else {
+    stopMotor();
+  }
 
-    lastError = error;
-    lastTime = currentTime;
+  // ---- SERIAL DEBUG (every 50ms) ----
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint > 50) {
+   Serial.print(current_deg);
+Serial.print(" ");
+Serial.println(target_deg);
+
+
+    lastPrint = millis();
   }
 }
 
-void controlMotor(double output) {
-  // Use a deadzone (30) to prevent the motor from stalling/humming 
-  // without moving. Adjust if your motor is weak.
-  if (abs(output) < 30) { 
-    stopMotor();
-    return;
-  }
+// ================== MOTOR FUNCTIONS ==================
+void moveForward() {
+  digitalWrite(motorL, HIGH);
+  digitalWrite(motorR, LOW);
+  analogWrite(11, speed);
+}
 
-  int speed = constrain(abs(output), 0, 255); 
-
-  if (output > 0) {
-    digitalWrite(motorL, HIGH);
-    digitalWrite(motorR, LOW);
-  } else {
-    digitalWrite(motorL, LOW);
-    digitalWrite(motorR, HIGH);
-  }
-  analogWrite(ENA, speed);
+void moveBackward() {
+  digitalWrite(motorL, LOW);
+  digitalWrite(motorR, HIGH);
 }
 
 void stopMotor() {
   digitalWrite(motorL, LOW);
   digitalWrite(motorR, LOW);
-  analogWrite(ENA, 0);
+  analogWrite(11, speed);
 }
 
+// ================== ENCODER ==================
 void handleEncoder() {
-  // Quadrate detection: Compare A and B to find direction
+  static unsigned long lastTime = 0;
+
+  // Simple noise filter (debounce)
+  if (micros() - lastTime < 150) return;
+
   if (digitalRead(pinS1) != digitalRead(pinS2)) {
     pulseCount++;
   } else {
     pulseCount--;
   }
+
+  lastTime = micros();
+}
+
+void PIDcalculation(){
+  
+  error = target_deg - current_deg;
+  
+  changeError = error - last_error; // derivative term
+  totalError += error; //accumalate errors to find integral term
+  speed = (Kp * error) + (Ki * totalError) + (Kd * changeError);//total gain
+  speed = constrain(speed, -255, 255);//constraining to appropriate value
+ 
+
+  last_error = error;
 }
