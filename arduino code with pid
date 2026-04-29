@@ -1,0 +1,107 @@
+// Pins
+const int pinS1 = 2;    // Encoder A (Interrupt)
+const int pinS2 = 4;    // Encoder B (Direction)
+const int ENA = 3;      // PWM Speed Control
+const int motorL = 10;  // IN1
+const int motorR = 11;  // IN2
+
+// Constants
+const int pulsesPerRevolution = 40; // 20 slots * 2 for CHANGE interrupt
+
+// Variables
+volatile int pulseCount = 0;
+float current_deg = 0.0;
+float target_deg = 1000.0; 
+
+// PID Gains
+double Kp = 2.0;  
+double Ki = 0.2;  
+double Kd = 1.0;  
+
+// PID Calculation Variables
+double lastError = 0;
+double integralSum = 0;
+unsigned long lastTime;
+
+void setup() {
+  pinMode(pinS1, INPUT_PULLUP);
+  pinMode(pinS2, INPUT_PULLUP);
+  pinMode(motorL, OUTPUT);
+  pinMode(motorR, OUTPUT);
+  pinMode(ENA, OUTPUT);
+
+  // Trigger whenever S1 pulses
+  attachInterrupt(digitalPinToInterrupt(pinS1), handleEncoder, CHANGE);
+
+  Serial.begin(9600);
+  lastTime = millis();
+}
+
+void loop() {
+  unsigned long currentTime = millis();
+  double elapsedTime = (double)(currentTime - lastTime);
+
+  // 1. Calculate Current Degrees
+  current_deg = ( (float)pulseCount / (float)pulsesPerRevolution ) * 360.0;
+
+  // 2. PID Calculation (Every 50ms)
+  if (elapsedTime >= 50) {
+    double error = target_deg - current_deg;
+
+    // Integral Term with anti-windup (prevents motor from spinning out of control)
+    integralSum += error * (elapsedTime / 1000.0);
+    integralSum = constrain(integralSum, -150, 150); 
+    
+    // Derivative Term
+    double derivative = (error - lastError) / (elapsedTime / 1000.0);
+    
+    // Total PID Output
+    double output = (Kp * error) + (Ki * integralSum) + (Kd * derivative);
+
+    controlMotor(output);
+
+    // 3. Serial Plotter Output (Clean numbers for graphing)
+    // Blue line = Target, Red line = Current position
+    Serial.print(target_deg);
+    Serial.print(",");
+    Serial.println(current_deg);
+
+    lastError = error;
+    lastTime = currentTime;
+  }
+}
+
+void controlMotor(double output) {
+  // Use a deadzone (30) to prevent the motor from stalling/humming 
+  // without moving. Adjust if your motor is weak.
+  if (abs(output) < 30) { 
+    stopMotor();
+    return;
+  }
+
+  int speed = constrain(abs(output), 0, 255); 
+
+  if (output > 0) {
+    digitalWrite(motorL, HIGH);
+    digitalWrite(motorR, LOW);
+  } else {
+    digitalWrite(motorL, LOW);
+    digitalWrite(motorR, HIGH);
+  }
+  analogWrite(ENA, speed);
+}
+
+void stopMotor() {
+  digitalWrite(motorL, LOW);
+  digitalWrite(motorR, LOW);
+  analogWrite(ENA, 0);
+}
+
+void handleEncoder() {
+  // Quadrate detection: Compare A and B to find direction
+  if (digitalRead(pinS1) != digitalRead(pinS2)) {
+    pulseCount++;
+  } else {
+    pulseCount--;
+  }
+}
