@@ -96,14 +96,3 @@ void handleEncoder() {
 
   lastTime = micros();
 }
-
-  }
-}
-
-void handleEncoder() {
-  if (digitalRead(pinS1) != digitalRead(pinS2)) {
-    pulseCount++;
-  } else {
-    pulseCount--;
-  }
-}
